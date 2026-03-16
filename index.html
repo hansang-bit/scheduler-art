@@ -513,6 +513,10 @@ textarea.input { resize: vertical; min-height: 72px; }
       <label class="label">비밀번호 확인</label>
       <input class="input" id="aPwdC" type="password" placeholder="비밀번호를 한 번 더 입력하세요" autocomplete="new-password">
     </div>
+    <div class="field hidden" id="aInviteField">
+      <label class="label">관리자 초대 코드</label>
+      <input class="input" id="aInvite" type="password" placeholder="관리자 초대 코드를 입력하세요">
+    </div>
     <div class="err" id="aErr"></div>
     <button class="btn btn-primary btn-full" style="margin-top:6px" onclick="doAuth()">로그인 / 가입</button>
     <p style="text-align:center;color:var(--text-dimmer);font-size:12px;margin-top:12px">처음 사용 시 자동으로 계정이 생성됩니다</p>
@@ -730,8 +734,21 @@ function setUsers(v)    { DB.set('sch_users', v); }
 function setProjects(v) { DB.set('sch_projects', v); }
 function setTasks(v)    { DB.set('sch_tasks', v); }
 
-// seed default project if none
-if (!getProjects().length) setProjects([{ id:'p0', name:'기본 프로젝트', color:'#60a5fa' }]);
+// seed default projects if none
+if (!getProjects().length) setProjects([
+  { id:'p1',  name:'토도영어',         color:'#60a5fa' },
+  { id:'p2',  name:'토도영어 아카데미', color:'#a78bfa' },
+  { id:'p3',  name:'토도수학',         color:'#f472b6' },
+  { id:'p4',  name:'토도한글',         color:'#fb923c' },
+  { id:'p5',  name:'토도스쿨',         color:'#fbbf24' },
+  { id:'p6',  name:'토도원',           color:'#4ade80' },
+  { id:'p7',  name:'특교 콘텐츠',      color:'#2dd4bf' },
+  { id:'p8',  name:'특교 플랫폼',      color:'#38bdf8' },
+  { id:'p9',  name:'에누마스쿨',       color:'#c084fc' },
+  { id:'p10', name:'AIDT',            color:'#f87171' },
+  { id:'p11', name:'공통',             color:'#84cc16' },
+  { id:'p12', name:'휴가',             color:'#94a3b8' },
+]);
 
 // ───────── STATE ─────────
 let CU       = null;   // current user
@@ -758,11 +775,14 @@ const fmtDate = s => { if(!s) return ''; const [,m,d] = s.split('-'); return `${
 const uid = () => '_'+Math.random().toString(36).slice(2)+Date.now().toString(36);
 
 // ───────── AUTH ─────────
+const MANAGER_CODE = 'ADMIN2025'; // 관리자 초대 코드 — 변경 가능
+
 function setAuthRole(role) {
   authRole = role;
   document.getElementById('tabW').classList.toggle('on', role==='worker');
   document.getElementById('tabM').classList.toggle('on', role==='manager');
   document.getElementById('aConfirmField').classList.add('hidden');
+  document.getElementById('aInviteField').classList.add('hidden');
   document.getElementById('aErr').textContent = '';
   document.getElementById('authNotice').classList.add('hidden');
 }
@@ -785,16 +805,34 @@ function doAuth() {
       return errEl.textContent = '비밀번호가 맞지 않습니다';
     loginAs(existing);
   } else {
-    const cfField = document.getElementById('aConfirmField');
-    if (cfField.classList.contains('hidden')) {
-      cfField.classList.remove('hidden');
-      document.getElementById('aPwdC').focus();
-      const n = document.getElementById('authNotice');
-      n.textContent = '처음 방문이시군요! 비밀번호를 한 번 더 입력해 주세요.';
-      n.classList.remove('hidden');
-      return;
+    // 관리자 신규 가입은 초대 코드 필요
+    if (authRole === 'manager') {
+      const cfField = document.getElementById('aConfirmField');
+      const invField = document.getElementById('aInviteField');
+      if (cfField.classList.contains('hidden')) {
+        cfField.classList.remove('hidden');
+        invField.classList.remove('hidden');
+        document.getElementById('aPwdC').focus();
+        const n = document.getElementById('authNotice');
+        n.textContent = '처음 방문이시군요! 비밀번호 확인과 관리자 초대 코드를 입력해 주세요.';
+        n.classList.remove('hidden');
+        return;
+      }
+      if (pwd !== cpwd) return errEl.textContent = '비밀번호가 일치하지 않습니다';
+      const invite = document.getElementById('aInvite').value.trim();
+      if (invite !== MANAGER_CODE) return errEl.textContent = '관리자 초대 코드가 올바르지 않습니다';
+    } else {
+      const cfField = document.getElementById('aConfirmField');
+      if (cfField.classList.contains('hidden')) {
+        cfField.classList.remove('hidden');
+        document.getElementById('aPwdC').focus();
+        const n = document.getElementById('authNotice');
+        n.textContent = '처음 방문이시군요! 비밀번호를 한 번 더 입력해 주세요.';
+        n.classList.remove('hidden');
+        return;
+      }
+      if (pwd !== cpwd) return errEl.textContent = '비밀번호가 일치하지 않습니다';
     }
-    if (pwd !== cpwd) return errEl.textContent = '비밀번호가 일치하지 않습니다';
     const nu = { id: uid(), name, pwd: btoa(unescape(encodeURIComponent(pwd))), role: authRole };
     users.push(nu);
     setUsers(users);
@@ -824,7 +862,9 @@ function doLogout() {
   document.getElementById('aName').value = '';
   document.getElementById('aPwd').value = '';
   document.getElementById('aPwdC').value = '';
+  document.getElementById('aInvite').value = '';
   document.getElementById('aConfirmField').classList.add('hidden');
+  document.getElementById('aInviteField').classList.add('hidden');
   document.getElementById('authNotice').classList.add('hidden');
   document.getElementById('aErr').textContent = '';
 }
