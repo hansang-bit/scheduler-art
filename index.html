@@ -340,8 +340,12 @@ textarea.input { resize: vertical; min-height: 72px; }
 .today-btn:hover { background: var(--surface2); color: var(--text); }
 
 /* ── GANTT ── */
-.gantt-wrap { overflow: auto; }
-.gantt-canvas { display: block; cursor: crosshair; }
+.gantt-outer  { display: flex; overflow: hidden; }
+.gantt-lbl    { display: block; flex-shrink: 0; }
+.gantt-wrap   { flex: 1; overflow-x: auto; overflow-y: hidden;
+                cursor: grab; user-select: none; }
+.gantt-wrap.dragging { cursor: grabbing; }
+.gantt-canvas { display: block; }
 
 /* ── MODAL ── */
 .overlay {
@@ -586,8 +590,11 @@ textarea.input { resize: vertical; min-height: 72px; }
           </div>
         </div>
       </div>
-      <div class="gantt-wrap" id="wGanttWrap">
-        <canvas class="gantt-canvas" id="wGantt"></canvas>
+      <div class="gantt-outer">
+        <canvas class="gantt-lbl" id="wGanttLbl"></canvas>
+        <div class="gantt-wrap" id="wGanttWrap">
+          <canvas class="gantt-canvas" id="wGantt"></canvas>
+        </div>
       </div>
     </div>
   </div>
@@ -647,8 +654,11 @@ textarea.input { resize: vertical; min-height: 72px; }
           </div>
         </div>
       </div>
-      <div class="gantt-wrap" id="mGanttWrap">
-        <canvas class="gantt-canvas" id="mGantt"></canvas>
+      <div class="gantt-outer">
+        <canvas class="gantt-lbl" id="mGanttLbl"></canvas>
+        <div class="gantt-wrap" id="mGanttWrap">
+          <canvas class="gantt-canvas" id="mGantt"></canvas>
+        </div>
       </div>
     </div>
   </div>
@@ -748,6 +758,41 @@ if (!getProjects().length) setProjects([
   { id:'p10', name:'AIDT',            color:'#f87171' },
   { id:'p11', name:'공통',             color:'#84cc16' },
   { id:'p12', name:'휴가',             color:'#94a3b8' },
+]);
+
+// ───────── 한국 공휴일 (2025~2026) ─────────
+const KR_HOLIDAYS = new Set([
+  // 2025
+  '2025-01-01',                                              // 신정
+  '2025-01-27',                                              // 임시공휴일
+  '2025-01-28','2025-01-29','2025-01-30',                   // 설날 연휴
+  '2025-03-01',                                              // 삼일절(토)
+  '2025-03-03',                                              // 삼일절 대체(월)
+  '2025-05-05','2025-05-06',                                 // 어린이날+부처님오신날 대체
+  '2025-06-03',                                              // 대통령선거 임시공휴일
+  '2025-06-06',                                              // 현충일
+  '2025-08-15',                                              // 광복절
+  '2025-10-03',                                              // 개천절
+  '2025-10-05','2025-10-06','2025-10-07','2025-10-08',      // 추석 연휴+대체
+  '2025-10-09',                                              // 한글날
+  '2025-12-25',                                              // 크리스마스
+  // 2026
+  '2026-01-01',                                              // 신정
+  '2026-02-16','2026-02-17','2026-02-18',                   // 설날 연휴
+  '2026-03-01',                                              // 삼일절(일)
+  '2026-03-02',                                              // 삼일절 대체(월)
+  '2026-05-05',                                              // 어린이날
+  '2026-05-24','2026-05-25',                                 // 부처님오신날+대체
+  '2026-06-03',                                              // 지방선거 임시공휴일
+  '2026-06-06',                                              // 현충일(토)
+  '2026-07-17',                                              // 제헌절(부활)
+  '2026-08-15',                                              // 광복절(토)
+  '2026-08-17',                                              // 광복절 대체(월)
+  '2026-09-24','2026-09-25','2026-09-26',                   // 추석 연휴
+  '2026-10-03',                                              // 개천절(토)
+  '2026-10-05',                                              // 개천절 대체(월)
+  '2026-10-09',                                              // 한글날
+  '2026-12-25',                                              // 크리스마스
 ]);
 
 // ───────── STATE ─────────
@@ -1107,12 +1152,13 @@ function delProj(id) {
 const GR_H    = 42;
 const GH_H    = 52;
 const GL_W    = 148;
-const MIN_DW  = 28;
-const DAYS    = 28;
+const MIN_DW  = 28;   // minimum px per day column
+const DAYS    = 90;   // days visible in one view window
+const NAV_STEP = 30;  // days moved per ‹/› click (≈ 1 month)
 
 function calRange(off) {
   const s = today0();
-  s.setDate(s.getDate() + off * DAYS);
+  s.setDate(s.getDate() + off * NAV_STEP);
   const e = new Date(s); e.setDate(e.getDate() + DAYS - 1);
   return { s, e };
 }
@@ -1123,7 +1169,7 @@ function renderWGantt() {
     `${fmtDate(d2s(s))} ~ ${fmtDate(d2s(e))}`;
   const tasks = getTasks().filter(t => t.wId === CU.id);
   const rows  = [{ id: CU.id, label: CU.name, color: null }];
-  drawGantt('wGantt', 'wGanttWrap', rows, tasks, s, 'worker');
+  drawGantt('wGantt', 'wGanttLbl', 'wGanttWrap', rows, tasks, s, 'worker');
 }
 
 function renderMGantt() {
@@ -1151,152 +1197,155 @@ function renderMGantt() {
     if (filterVal) allTasks = allTasks.filter(t => t.pId===filterVal);
   }
 
-  drawGantt('mGantt', 'mGanttWrap', rows, allTasks, s, mView);
+  drawGantt('mGantt', 'mGanttLbl', 'mGanttWrap', rows, allTasks, s, mView);
 }
 
-function drawGantt(canvasId, wrapId, rows, tasks, startDate, mode) {
-  const canvas = document.getElementById(canvasId);
-  const wrap   = document.getElementById(wrapId);
-  const dpr    = window.devicePixelRatio || 1;
-  const glw    = window.innerWidth <= 600 ? 100 : GL_W; // label col narrower on mobile
+function drawGantt(canvasId, lblCanvasId, wrapId, rows, tasks, startDate, mode) {
+  const canvas    = document.getElementById(canvasId);
+  const lblCanvas = document.getElementById(lblCanvasId);
+  const wrap      = document.getElementById(wrapId);
+  const dpr       = window.devicePixelRatio || 1;
+  const glw       = window.innerWidth <= 600 ? 100 : GL_W;
 
+  // dates canvas fills the scroll area; label canvas is fixed width glw
   const availW = wrap.clientWidth || 900;
-  const dayW   = Math.max(MIN_DW, Math.floor((availW - glw) / DAYS));
-  const cw     = glw + dayW * DAYS;
+  const dayW   = Math.max(MIN_DW, Math.floor(availW / DAYS));
+  const cw     = dayW * DAYS;
   const ch     = GH_H + GR_H * Math.max(rows.length, 1);
 
-  canvas.style.width  = cw + 'px';
-  canvas.style.height = ch + 'px';
-  canvas.width  = cw * dpr;
-  canvas.height = ch * dpr;
+  // ── size canvases ──
+  canvas.style.width  = cw  + 'px'; canvas.style.height = ch + 'px';
+  canvas.width  = cw  * dpr;        canvas.height = ch  * dpr;
 
-  const ctx = canvas.getContext('2d');
+  lblCanvas.style.width  = glw + 'px'; lblCanvas.style.height = ch + 'px';
+  lblCanvas.width  = glw * dpr;        lblCanvas.height = ch  * dpr;
+
+  const ctx  = canvas.getContext('2d');
+  const lctx = lblCanvas.getContext('2d');
   ctx.scale(dpr, dpr);
+  lctx.scale(dpr, dpr);
 
   const C = {
-    bg:      '#1a1a1a',
-    surface: '#242424',
-    surf2:   '#2e2e2e',
-    border:  '#3a3a3a',
-    text:    '#e5e5e5',
-    dim:     '#888',
-    dimmer:  '#555',
-    today_c: 'rgba(201,100,66,0.07)',
-    today_l: '#c96442',
-    wkend:   'rgba(255,255,255,0.025)',
-    sun:     '#f87171',
-    sat:     '#60a5fa',
+    bg:       '#1a1a1a',
+    surface:  '#242424',
+    surf2:    '#2e2e2e',
+    border:   '#3a3a3a',
+    text:     '#e5e5e5',
+    dim:      '#888',
+    dimmer:   '#555',
+    today_c:  'rgba(248,113,113,0.14)',
+    today_l:  '#4ade80',
+    wkend:    'rgba(255,255,255,0.025)',
+    holiday:  'rgba(255,255,255,0.025)',
+    sun:      '#f87171',
+    sat:      '#60a5fa',
+    hol:      '#fca5a5',
   };
 
-  // clear
-  ctx.fillStyle = C.surface;
-  ctx.fillRect(0, 0, cw, ch);
+  // ── clear both canvases ──
+  ctx.fillStyle  = C.surface; ctx.fillRect(0, 0, cw,  ch);
+  lctx.fillStyle = C.surface; lctx.fillRect(0, 0, glw, ch);
 
   const todayStr = d2s(today0());
 
-  // ── column backgrounds & day headers ──
+  // ── dates canvas: column backgrounds & day headers ──
   for (let i = 0; i < DAYS; i++) {
     const d  = new Date(startDate); d.setDate(d.getDate() + i);
     const ds = d2s(d);
-    const x  = glw + i * dayW;
+    const localDs = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+    const x   = i * dayW;  // no glw offset
     const dow = d.getDay();
     const isToday   = ds === todayStr;
     const isWeekend = dow === 0 || dow === 6;
+    const isHoliday = KR_HOLIDAYS.has(localDs);
 
     if (isToday) {
-      ctx.fillStyle = C.today_c;
-      ctx.fillRect(x, 0, dayW, ch);
+      ctx.fillStyle = C.today_c; ctx.fillRect(x, 0, dayW, ch);
+    } else if (isHoliday) {
+      ctx.fillStyle = C.holiday; ctx.fillRect(x, 0, dayW, ch);
     } else if (isWeekend) {
-      ctx.fillStyle = C.wkend;
-      ctx.fillRect(x, 0, dayW, ch);
+      ctx.fillStyle = C.wkend;   ctx.fillRect(x, 0, dayW, ch);
     }
 
     // vertical grid line
-    ctx.strokeStyle = C.border;
-    ctx.lineWidth = 0.5;
+    ctx.strokeStyle = C.border; ctx.lineWidth = 0.5;
     ctx.beginPath(); ctx.moveTo(x, GH_H); ctx.lineTo(x, ch); ctx.stroke();
 
     // month label (first column or month start)
     if (i === 0 || d.getDate() === 1) {
       ctx.fillStyle = C.text;
       ctx.font = '600 11px -apple-system,sans-serif';
-      ctx.textAlign = 'center';
-      ctx.textBaseline = 'middle';
+      ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
       ctx.fillText(`${d.getMonth()+1}월`, x + dayW/2, 17);
     }
 
     // day number
-    ctx.fillStyle = isToday ? C.today_l : (dow===0 ? C.sun : (dow===6 ? C.sat : C.dim));
+    ctx.fillStyle = isToday ? C.today_l : (isHoliday ? C.hol : (dow===0 ? C.sun : (dow===6 ? C.sat : C.dim)));
     ctx.font = `${isToday?'700':'400'} 11px -apple-system,sans-serif`;
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
     ctx.fillText(d.getDate(), x + dayW/2, 37);
   }
 
-  // header bottom border
-  ctx.strokeStyle = C.border;
-  ctx.lineWidth = 1;
+  // dates canvas: header bottom border
+  ctx.strokeStyle = C.border; ctx.lineWidth = 1;
   ctx.beginPath(); ctx.moveTo(0, GH_H); ctx.lineTo(cw, GH_H); ctx.stroke();
 
-  // label column bg
-  ctx.fillStyle = C.surface;
-  ctx.fillRect(0, 0, glw, ch);
-  ctx.strokeStyle = C.border; ctx.lineWidth = 1;
-  ctx.beginPath(); ctx.moveTo(glw, 0); ctx.lineTo(glw, ch); ctx.stroke();
-
-  // header label
-  ctx.fillStyle = C.dim;
-  ctx.font = '11px -apple-system,sans-serif';
-  ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
-  ctx.fillText(mode==='worker'?'작업자':'프로젝트', 14, GH_H/2);
+  // ── label canvas: header ──
+  lctx.fillStyle = C.dim;
+  lctx.font = '11px -apple-system,sans-serif';
+  lctx.textAlign = 'left'; lctx.textBaseline = 'middle';
+  lctx.fillText(mode==='worker'?'작업자':'프로젝트', 14, GH_H/2);
+  // header bottom border
+  lctx.strokeStyle = C.border; lctx.lineWidth = 1;
+  lctx.beginPath(); lctx.moveTo(0, GH_H); lctx.lineTo(glw, GH_H); lctx.stroke();
+  // right separator
+  lctx.beginPath(); lctx.moveTo(glw - 0.5, 0); lctx.lineTo(glw - 0.5, ch); lctx.stroke();
 
   // ── rows ──
   const projs = getProjects();
 
   rows.forEach((row, ri) => {
     const ry = GH_H + ri * GR_H;
+    const altBg = 'rgba(255,255,255,0.018)';
 
-    // alternating row bg
+    // alternating row bg — both canvases
     if (ri % 2 === 1) {
-      ctx.fillStyle = 'rgba(255,255,255,0.018)';
-      ctx.fillRect(0, ry, cw, GR_H);
+      ctx.fillStyle  = altBg; ctx.fillRect(0,   ry, cw,  GR_H);
+      lctx.fillStyle = altBg; lctx.fillRect(0, ry, glw, GR_H);
     }
 
-    // row border
-    ctx.strokeStyle = C.border; ctx.lineWidth = 0.5;
-    ctx.beginPath(); ctx.moveTo(0, ry + GR_H); ctx.lineTo(cw, ry + GR_H); ctx.stroke();
+    // row border — both canvases
+    ctx.strokeStyle  = C.border; ctx.lineWidth  = 0.5;
+    ctx.beginPath();  ctx.moveTo(0,   ry + GR_H); ctx.lineTo(cw,  ry + GR_H); ctx.stroke();
+    lctx.strokeStyle = C.border; lctx.lineWidth = 0.5;
+    lctx.beginPath(); lctx.moveTo(0, ry + GR_H); lctx.lineTo(glw, ry + GR_H); lctx.stroke();
 
-    // avatar
+    // ── label canvas: avatar + name ──
     const ax = 14, ay = ry + GR_H/2;
-    ctx.beginPath(); ctx.arc(ax+12, ay, 12, 0, Math.PI*2);
-    ctx.fillStyle = row.color ? row.color+'33' : C.surf2;
-    ctx.fill();
-    ctx.strokeStyle = row.color ? row.color+'88' : C.border;
-    ctx.lineWidth = 1;
-    ctx.stroke();
+    lctx.beginPath(); lctx.arc(ax+12, ay, 12, 0, Math.PI*2);
+    lctx.fillStyle   = row.color ? row.color+'33' : C.surf2; lctx.fill();
+    lctx.strokeStyle = row.color ? row.color+'88' : C.border; lctx.lineWidth = 1; lctx.stroke();
 
-    ctx.fillStyle = row.color ? row.color : C.dim;
-    ctx.font = '600 11px -apple-system,sans-serif';
-    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-    ctx.fillText(row.label.charAt(0).toUpperCase(), ax+12, ay);
+    lctx.fillStyle = row.color ? row.color : C.dim;
+    lctx.font = '600 11px -apple-system,sans-serif';
+    lctx.textAlign = 'center'; lctx.textBaseline = 'middle';
+    lctx.fillText(row.label.charAt(0).toUpperCase(), ax+12, ay);
 
-    // row label
-    ctx.fillStyle = C.text;
-    ctx.font = '12px -apple-system,sans-serif';
-    ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
+    lctx.fillStyle = C.text;
+    lctx.font = '12px -apple-system,sans-serif';
+    lctx.textAlign = 'left'; lctx.textBaseline = 'middle';
     let lbl = row.label;
     const maxLW = glw - 42;
-    while (ctx.measureText(lbl).width > maxLW && lbl.length > 1) lbl = lbl.slice(0,-1);
+    while (lctx.measureText(lbl).width > maxLW && lbl.length > 1) lbl = lbl.slice(0,-1);
     if (lbl !== row.label) lbl += '…';
-    ctx.fillText(lbl, ax+28, ay);
+    lctx.fillText(lbl, ax+28, ay);
 
-    // ── tasks for this row ──
+    // ── dates canvas: task bars ──
     const rowTasks = tasks.filter(t =>
       mode === 'worker' ? t.wId === row.id : t.pId === row.id
     ).sort((a,b) => a.s.localeCompare(b.s));
 
-    // lane stacking
-    const lanes = []; // lanes[i] = end date of last task in lane i
+    const lanes = [];
     rowTasks.forEach(t => {
       const ts = s2d(t.s), te = s2d(t.e);
       const si = Math.round((ts - startDate) / 86400000);
@@ -1304,7 +1353,7 @@ function drawGantt(canvasId, wrapId, rows, tasks, startDate, mode) {
       if (ei < 0 || si >= DAYS) return;
 
       const ci = Math.max(0, si), ci2 = Math.min(DAYS-1, ei);
-      const bx = glw + ci  * dayW + 1;
+      const bx = ci * dayW + 1;  // no glw offset
       const bw = (ci2 - ci + 1) * dayW - 2;
       if (bw <= 0) return;
 
@@ -1317,24 +1366,16 @@ function drawGantt(canvasId, wrapId, rows, tasks, startDate, mode) {
       const bh = Math.floor((GR_H - 8) / Math.min(maxLanes, 2));
       const by = ry + 4 + lane * (bh + 2);
 
-      const p = projs.find(x => x.id === t.pId);
+      const p   = projs.find(x => x.id === t.pId);
       const col = mode === 'worker' ? (row.color || PALETTE[0]) : (p?.color || '#888');
 
-      // bar fill
       ctx.fillStyle = col + '28';
-      roundRect(ctx, bx, by, bw, bh - 1, 3);
-      ctx.fill();
-      // bar border
-      ctx.strokeStyle = col + 'cc';
-      ctx.lineWidth = 1;
-      roundRect(ctx, bx, by, bw, bh - 1, 3);
-      ctx.stroke();
-      // bar left accent
+      roundRect(ctx, bx, by, bw, bh - 1, 3); ctx.fill();
+      ctx.strokeStyle = col + 'cc'; ctx.lineWidth = 1;
+      roundRect(ctx, bx, by, bw, bh - 1, 3); ctx.stroke();
       ctx.fillStyle = col;
-      roundRect(ctx, bx, by, 3, bh - 1, 2);
-      ctx.fill();
+      roundRect(ctx, bx, by, 3, bh - 1, 2); ctx.fill();
 
-      // label
       if (bw > 28) {
         ctx.fillStyle = col;
         ctx.font = '11px -apple-system,sans-serif';
@@ -1358,9 +1399,8 @@ function drawGantt(canvasId, wrapId, rows, tasks, startDate, mode) {
   // today vertical line
   const todayOff = Math.round((today0() - startDate) / 86400000);
   if (todayOff >= 0 && todayOff < DAYS) {
-    const tx = glw + todayOff * dayW + dayW/2;
-    ctx.strokeStyle = C.today_l;
-    ctx.lineWidth = 1.5;
+    const tx = todayOff * dayW + dayW/2;  // no glw offset
+    ctx.strokeStyle = C.today_l; ctx.lineWidth = 1.5;
     ctx.setLineDash([4,3]);
     ctx.beginPath(); ctx.moveTo(tx, GH_H); ctx.lineTo(tx, ch); ctx.stroke();
     ctx.setLineDash([]);
@@ -1384,17 +1424,16 @@ function setupTooltip(canvasId, wrapId, getRowsFn, getTasksFn, modeFn, getOffFn)
   const tooltip = document.getElementById('tooltip');
 
   function showTooltip(clientX, clientY) {
-    const glw  = window.innerWidth <= 600 ? 100 : GL_W;
     const rect = canvas.getBoundingClientRect();
     const dpr  = window.devicePixelRatio || 1;
     const mx = (clientX - rect.left) * (canvas.width / rect.width / dpr);
     const my = (clientY - rect.top)  * (canvas.height / rect.height / dpr);
 
-    if (mx < glw || my < GH_H) { tooltip.style.display='none'; return; }
+    if (mx < 0 || my < GH_H) { tooltip.style.display='none'; return; }
 
     const wrap  = document.getElementById(wrapId);
-    const dayW  = Math.max(MIN_DW, Math.floor((wrap.clientWidth - glw) / DAYS));
-    const di    = Math.floor((mx - glw) / dayW);
+    const dayW  = Math.max(MIN_DW, Math.floor(wrap.clientWidth / DAYS));
+    const di    = Math.floor(mx / dayW);
     const ri    = Math.floor((my - GH_H) / GR_H);
     const rows  = getRowsFn();
     if (ri < 0 || ri >= rows.length) { tooltip.style.display='none'; return; }
@@ -1444,6 +1483,32 @@ function setupTooltip(canvasId, wrapId, getRowsFn, getTasksFn, modeFn, getOffFn)
     setTimeout(() => { tooltip.style.display='none'; }, 1800);
   });
 }
+
+// ───────── DRAG-SCROLL ─────────
+function setupDragScroll(wrapId) {
+  const wrap = document.getElementById(wrapId);
+  let dragging = false, startX = 0, scrollLeft = 0;
+
+  wrap.addEventListener('mousedown', e => {
+    dragging = true;
+    startX = e.pageX - wrap.getBoundingClientRect().left;
+    scrollLeft = wrap.scrollLeft;
+    wrap.classList.add('dragging');
+    e.preventDefault();
+  });
+  document.addEventListener('mouseup', () => {
+    if (dragging) { dragging = false; wrap.classList.remove('dragging'); }
+  });
+  wrap.addEventListener('mousemove', e => {
+    if (!dragging) return;
+    const x = e.pageX - wrap.getBoundingClientRect().left;
+    wrap.scrollLeft = scrollLeft - (x - startX);
+  });
+  // touch: let native scroll handle it (no preventDefault)
+}
+
+setupDragScroll('wGanttWrap');
+setupDragScroll('mGanttWrap');
 
 setupTooltip('wGantt', 'wGanttWrap',
   () => CU ? [{ id:CU.id, label:CU.name }] : [],
