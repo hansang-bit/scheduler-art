@@ -252,6 +252,10 @@ textarea.input { resize: vertical; min-height: 72px; }
   transition: border-color 0.15s;
 }
 .task-item:hover { border-color: var(--surface3); }
+.task-item.hl  { border-color: rgba(255,255,255,0.18); background: rgba(255,255,255,0.06); }
+.task-item.sel { border-color: rgba(255,255,255,0.35); background: rgba(255,255,255,0.10);
+                 box-shadow: 0 0 0 1.5px rgba(255,255,255,0.15); }
+.task-list-m { max-height: 320px; overflow-y: auto; }
 .task-dot { width: 9px; height: 9px; border-radius: 50%; flex-shrink: 0; }
 .task-info { flex: 1; min-width: 0; }
 .task-name { font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-size: 13px; }
@@ -660,6 +664,7 @@ textarea.input { resize: vertical; min-height: 72px; }
           <canvas class="gantt-canvas" id="mGantt"></canvas>
         </div>
       </div>
+      <div id="mTaskListWrap" style="margin-top:16px"></div>
     </div>
   </div>
 </div>
@@ -952,6 +957,7 @@ function addTask() {
   tasks.push({ id: uid(), wId: CU.id, wName: CU.name, pId, title, s, e, note:'' });
   setTasks(tasks);
   document.getElementById('wTaskTitle').value = '';
+  document.getElementById('wTaskStart').value = d2s(today0());
   renderWTaskList();
   renderWGantt();
 }
@@ -1066,6 +1072,7 @@ function renderMWorkerList() {
         <div class="worker-name">${esc(w.name)}</div>
         <div class="worker-sub">일감 ${wt.length}개${ongoing?' · 진행 중 '+ongoing+'개':''}</div>
       </div>
+      <button class="btn btn-danger btn-sm" onclick="delWorker('${w.id}')">삭제</button>
     </div>`;
   }).join('');
 }
@@ -1086,6 +1093,51 @@ function renderMFilterSel() {
 }
 
 function renderMTaskSummary() { renderMWorkerList(); }
+
+function delWorker(id) {
+  const w = getUsers().find(u => u.id === id);
+  if (!w) return;
+  const taskCount = getTasks().filter(t => t.wId === id).length;
+  const msg = taskCount > 0
+    ? `"${w.name}" 작업자를 삭제하면 해당 작업자의 일감 ${taskCount}개도 함께 삭제됩니다.\n삭제하시겠습니까?`
+    : `"${w.name}" 작업자를 삭제하시겠습니까?`;
+  if (!confirm(msg)) return;
+  setUsers(getUsers().filter(u => u.id !== id));
+  setTasks(getTasks().filter(t => t.wId !== id));
+  renderMWorkerList();
+  renderMFilterSel();
+  renderMGantt();
+}
+
+function delTaskByManager(id) {
+  if (!confirm('이 일감을 삭제하시겠습니까?')) return;
+  setTasks(getTasks().filter(t => t.id !== id));
+  renderMGantt();
+}
+
+function renderMTaskList(tasks, workers, projects) {
+  const wrap = document.getElementById('mTaskListWrap');
+  if (!tasks.length) { wrap.innerHTML = ''; return; }
+  const sorted = [...tasks].sort((a, b) => a.s.localeCompare(b.s));
+  wrap.innerHTML = `
+    <div style="font-size:12px;color:var(--fg3);margin-bottom:8px">일감 목록 (${sorted.length}개)</div>
+    <div class="task-list-m">
+      ${sorted.map(t => {
+        const p = projects.find(x => x.id === t.pId);
+        const w = workers.find(x => x.id === t.wId);
+        return `<div class="task-item" data-task-id="${t.id}">
+          <div class="task-dot" style="background:${p?.color||'#666'}"></div>
+          <div class="task-info">
+            <div class="task-name">${esc(t.title)}</div>
+            <div class="task-sub">${esc(p?.name||'알 수 없음')} · ${esc(w?.name||'알 수 없음')} · ${fmtDate(t.s)} ~ ${fmtDate(t.e)}</div>
+          </div>
+          <div class="task-acts">
+            <button class="btn btn-danger btn-sm" onclick="delTaskByManager('${t.id}')">삭제</button>
+          </div>
+        </div>`;
+      }).join('')}
+    </div>`;
+}
 
 function setMView(v) {
   mView = v;
@@ -1198,6 +1250,7 @@ function renderMGantt() {
   }
 
   drawGantt('mGantt', 'mGanttLbl', 'mGanttWrap', rows, allTasks, s, mView);
+  renderMTaskList(allTasks, getUsers().filter(u => u.role==='worker'), getProjects());
 }
 
 function drawGantt(canvasId, lblCanvasId, wrapId, rows, tasks, startDate, mode) {
@@ -1367,7 +1420,9 @@ function drawGantt(canvasId, lblCanvasId, wrapId, rows, tasks, startDate, mode) 
       const by = ry + 4 + lane * (bh + 2);
 
       const p   = projs.find(x => x.id === t.pId);
-      const col = mode === 'worker' ? (row.color || PALETTE[0]) : (p?.color || '#888');
+      // worker view: color by project so project is visually identifiable
+      // project view: color by project (matches row)
+      const col = p?.color || row.color || PALETTE[0];
 
       ctx.fillStyle = col + '28';
       roundRect(ctx, bx, by, bw, bh - 1, 3); ctx.fill();
@@ -1377,12 +1432,17 @@ function drawGantt(canvasId, lblCanvasId, wrapId, rows, tasks, startDate, mode) 
       roundRect(ctx, bx, by, 3, bh - 1, 2); ctx.fill();
 
       if (bw > 28) {
+        // worker view → show project name prefix; project view → show worker name prefix
+        const allUsers = getUsers();
+        const wUser = allUsers.find(u => u.id === t.wId);
+        const prefix = mode === 'worker' ? (p?.name || '') : (wUser?.name || '');
+        const barText = prefix ? `${prefix} · ${t.title}` : t.title;
         ctx.fillStyle = col;
         ctx.font = '11px -apple-system,sans-serif';
         ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
         ctx.save();
         ctx.beginPath(); ctx.rect(bx+7, by, bw-10, bh-1); ctx.clip();
-        ctx.fillText(t.title, bx+8, by + (bh-1)/2);
+        ctx.fillText(barText, bx+8, by + (bh-1)/2);
         ctx.restore();
       }
     });
@@ -1419,25 +1479,23 @@ function roundRect(ctx, x, y, w, h, r) {
 }
 
 // ───────── TOOLTIP ─────────
-function setupTooltip(canvasId, wrapId, getRowsFn, getTasksFn, modeFn, getOffFn) {
+function setupTooltip(canvasId, wrapId, getRowsFn, getTasksFn, modeFn, getOffFn, onHover, onClick) {
   const canvas  = document.getElementById(canvasId);
   const tooltip = document.getElementById('tooltip');
 
-  function showTooltip(clientX, clientY) {
+  // Returns the task under the cursor, or null
+  function hitTask(clientX, clientY) {
     const rect = canvas.getBoundingClientRect();
     const dpr  = window.devicePixelRatio || 1;
     const mx = (clientX - rect.left) * (canvas.width / rect.width / dpr);
     const my = (clientY - rect.top)  * (canvas.height / rect.height / dpr);
-
-    if (mx < 0 || my < GH_H) { tooltip.style.display='none'; return; }
-
+    if (mx < 0 || my < GH_H) return null;
     const wrap  = document.getElementById(wrapId);
     const dayW  = Math.max(MIN_DW, Math.floor(wrap.clientWidth / DAYS));
     const di    = Math.floor(mx / dayW);
     const ri    = Math.floor((my - GH_H) / GR_H);
     const rows  = getRowsFn();
-    if (ri < 0 || ri >= rows.length) { tooltip.style.display='none'; return; }
-
+    if (ri < 0 || ri >= rows.length) return null;
     const startDate = calRange(getOffFn()).s;
     const hd = new Date(startDate); hd.setDate(hd.getDate() + di);
     const hds = d2s(hd);
@@ -1447,26 +1505,48 @@ function setupTooltip(canvasId, wrapId, getRowsFn, getTasksFn, modeFn, getOffFn)
       (mode==='worker' ? t.wId===row.id : t.pId===row.id) &&
       t.s <= hds && t.e >= hds
     );
-    if (!hits.length) { tooltip.style.display='none'; return; }
+    return hits.length ? hits[0] : null;
+  }
 
-    const t = hits[0];
+  function showTooltip(clientX, clientY) {
+    const t = hitTask(clientX, clientY);
+    if (!t) {
+      tooltip.style.display='none';
+      if (onHover) onHover(null);
+      return;
+    }
     const p = getProjects().find(x => x.id===t.pId);
     document.getElementById('ttTitle').textContent = t.title;
     document.getElementById('ttMeta').innerHTML =
       `${esc(p?.name||'?')} · ${esc(t.wName)}<br>${t.s} ~ ${t.e}` +
       (t.note ? `<br><em>${esc(t.note)}</em>` : '');
-
     tooltip.style.display = 'block';
     let tx = clientX + 14, ty = clientY - 10;
     if (tx + 230 > window.innerWidth) tx = clientX - 230;
     if (ty + 80 > window.innerHeight) ty = clientY - 80;
     tooltip.style.left = tx + 'px';
     tooltip.style.top  = ty + 'px';
+    if (onHover) onHover(t.id);
   }
 
   // Mouse
   canvas.addEventListener('mousemove', e => showTooltip(e.clientX, e.clientY));
-  canvas.addEventListener('mouseleave', () => { tooltip.style.display='none'; });
+  canvas.addEventListener('mouseleave', () => {
+    tooltip.style.display='none';
+    if (onHover) onHover(null);
+  });
+
+  // Click — fire only when mouse hasn't moved (not a drag)
+  if (onClick) {
+    let downX = 0, downY = 0;
+    canvas.addEventListener('mousedown', e => { downX = e.clientX; downY = e.clientY; });
+    canvas.addEventListener('mouseup', e => {
+      if (Math.abs(e.clientX - downX) < 5 && Math.abs(e.clientY - downY) < 5) {
+        const t = hitTask(e.clientX, e.clientY);
+        onClick(t ? t.id : null);
+      }
+    });
+  }
 
   // Touch — tap to show tooltip
   canvas.addEventListener('touchstart', e => {
@@ -1480,7 +1560,7 @@ function setupTooltip(canvasId, wrapId, getRowsFn, getTasksFn, modeFn, getOffFn)
     showTooltip(t.clientX, t.clientY);
   }, { passive: false });
   canvas.addEventListener('touchend', () => {
-    setTimeout(() => { tooltip.style.display='none'; }, 1800);
+    setTimeout(() => { tooltip.style.display='none'; if (onHover) onHover(null); }, 1800);
   });
 }
 
@@ -1537,7 +1617,24 @@ setupTooltip('mGantt', 'mGanttWrap',
     return ts;
   },
   () => mView,
-  () => mCalOff
+  () => mCalOff,
+  // onHover: highlight matching task-item in the list
+  (taskId) => {
+    document.querySelectorAll('#mTaskListWrap .task-item').forEach(el => {
+      el.classList.toggle('hl', !!taskId && el.dataset.taskId === taskId);
+    });
+  },
+  // onClick: select & scroll to matching task-item
+  (taskId) => {
+    document.querySelectorAll('#mTaskListWrap .task-item').forEach(el => {
+      el.classList.remove('sel');
+    });
+    if (!taskId) return;
+    const el = document.querySelector(`#mTaskListWrap .task-item[data-task-id="${taskId}"]`);
+    if (!el) return;
+    el.classList.add('sel');
+    el.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  }
 );
 
 // ───────── RESIZE ─────────
