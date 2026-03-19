@@ -819,7 +819,7 @@ const PALETTE = [
 // ───────── HELPERS ─────────
 const esc = s => String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
 const today0 = () => { const d = new Date(); d.setHours(0,0,0,0); return d; };
-const d2s = d => d.toISOString().split('T')[0];
+const d2s = d => `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
 const s2d = s => { const [y,m,d] = s.split('-').map(Number); return new Date(y,m-1,d); };
 const fmtDate = s => { if(!s) return ''; const [,m,d] = s.split('-'); return `${+m}/${+d}`; };
 const uid = () => '_'+Math.random().toString(36).slice(2)+Date.now().toString(36);
@@ -958,6 +958,7 @@ function addTask() {
   setTasks(tasks);
   document.getElementById('wTaskTitle').value = '';
   document.getElementById('wTaskStart').value = d2s(today0());
+  document.getElementById('wTaskEnd').value   = d2s(today0());
   renderWTaskList();
   renderWGantt();
 }
@@ -1636,6 +1637,19 @@ setupTooltip('mGantt', 'mGanttWrap',
     el.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
   }
 );
+
+// ───────── DATE REFRESH (탭 복귀 시 날짜 자동 갱신) ─────────
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState !== 'visible' || !CU) return;
+  if (CU.role === 'worker') {
+    const td = d2s(today0());
+    const startEl = document.getElementById('wTaskStart');
+    const endEl   = document.getElementById('wTaskEnd');
+    // 사용자가 직접 수정하지 않은 경우(어제 날짜)에만 오늘로 갱신
+    if (startEl.value < td) startEl.value = td;
+    if (endEl.value   < td) endEl.value   = td;
+  }
+});
 
 // ───────── RESIZE ─────────
 let resizeTimer;
