@@ -738,33 +738,44 @@ textarea.input { resize: vertical; min-height: 72px; }
 
 <!-- ═══════════════════ SCRIPT ═══════════════════ -->
 <script>
-// ───────── STORE ─────────
-const DB = {
-  get: k => { try { return JSON.parse(localStorage.getItem(k)) ?? null; } catch { return null; } },
-  set: (k, v) => localStorage.setItem(k, JSON.stringify(v)),
-};
-function getUsers()    { return DB.get('sch_users')    || []; }
-function getProjects() { return DB.get('sch_projects') || []; }
-function getTasks()    { return DB.get('sch_tasks')    || []; }
-function setUsers(v)    { DB.set('sch_users', v); }
-function setProjects(v) { DB.set('sch_projects', v); }
-function setTasks(v)    { DB.set('sch_tasks', v); }
+// ───────── JSONBLOB BACKEND ─────────
+const BLOB_ID = '019d0512-1809-742c-b2d2-957539810ada';
+const BLOB_URL = `https://jsonblob.com/api/jsonBlob/${BLOB_ID}`;
+const MANAGER_CODE = 'ADMIN2025';
 
-// seed default projects if none
-if (!getProjects().length) setProjects([
-  { id:'p1',  name:'토도영어',         color:'#60a5fa' },
-  { id:'p2',  name:'토도영어 아카데미', color:'#a78bfa' },
-  { id:'p3',  name:'토도수학',         color:'#f472b6' },
-  { id:'p4',  name:'토도한글',         color:'#fb923c' },
-  { id:'p5',  name:'토도스쿨',         color:'#fbbf24' },
-  { id:'p6',  name:'토도원',           color:'#4ade80' },
-  { id:'p7',  name:'특교 콘텐츠',      color:'#2dd4bf' },
-  { id:'p8',  name:'특교 플랫폼',      color:'#38bdf8' },
-  { id:'p9',  name:'에누마스쿨',       color:'#c084fc' },
-  { id:'p10', name:'AIDT',            color:'#f87171' },
-  { id:'p11', name:'공통',             color:'#84cc16' },
-  { id:'p12', name:'휴가',             color:'#94a3b8' },
-]);
+// 인메모리 상태 캐시
+const appState = { users: [], projects: [], tasks: [] };
+
+async function readDB() {
+  const res = await fetch(BLOB_URL, { headers: { 'Accept': 'application/json' } });
+  if (!res.ok) throw new Error('데이터 읽기 오류');
+  return res.json();
+}
+
+async function writeDB(db) {
+  const res = await fetch(BLOB_URL, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+    body: JSON.stringify(db)
+  });
+  if (!res.ok) throw new Error('데이터 저장 오류');
+}
+
+// 동기 여퍼 (캐시에서 읽음)
+function getUsers()    { return appState.users.map(u => ({ id: u.id, name: u.name, role: u.role })); }
+function getProjects() { return appState.projects; }
+function getTasks()    { return appState.tasks; }
+
+async function syncAll() {
+  const db = await readDB();
+  appState.users    = db.users    || [];
+  appState.projects = db.projects || [];
+  appState.tasks    = CU?.role === 'manager'
+    ? (db.tasks || [])
+    : (db.tasks || []).filter(t => t.wId === CU?.id);
+}
+
+let pollTimer = null;
 
 // ───────── 한국 공휴일 (2025~2026) ─────────
 const KR_HOLIDAYS = new Set([
@@ -826,8 +837,6 @@ const fmtDate = s => { if(!s) return ''; const [,m,d] = s.split('-'); return `${
 const uid = () => '_'+Math.random().toString(36).slice(2)+Date.now().toString(36);
 
 // ───────── AUTH ─────────
-const MANAGER_CODE = 'ADMIN2025'; // 관리자 초대 코드 — 변경 가능
-
 function setAuthRole(role) {
   authRole = role;
   document.getElementById('tabW').classList.toggle('on', role==='worker');
@@ -838,61 +847,66 @@ function setAuthRole(role) {
   document.getElementById('authNotice').classList.add('hidden');
 }
 
-function doAuth() {
-  const name = document.getElementById('aName').value.trim();
-  const pwd  = document.getElementById('aPwd').value;
-  const cpwd = document.getElementById('aPwdC').value;
-  const errEl = document.getElementById('aErr');
+async function doAuth() {
+  const name   = document.getElementById('aName').value.trim();
+  const pwd    = document.getElementById('aPwd').value;
+  const cpwd   = document.getElementById('aPwdC').value;
+  const invite = document.getElementById('aInvite').value.trim();
+  const errEl  = document.getElementById('aErr');
   errEl.textContent = '';
 
   if (!name) return errEl.textContent = '이름을 입력하세요';
   if (!pwd)  return errEl.textContent = '비밀번호를 입력하세요';
 
-  const users = getUsers();
-  const existing = users.find(u => u.name === name && u.role === authRole);
+  const cfField = document.getElementById('aConfirmField');
+  const needConfirm = !cfField.classList.contains('hidden');
 
-  if (existing) {
-    if (btoa(unescape(encodeURIComponent(pwd))) !== existing.pwd)
-      return errEl.textContent = '비밀번호가 맞지 않습니다';
-    loginAs(existing);
-  } else {
-    // 관리자 신규 가입은 초대 코드 필요
-    if (authRole === 'manager') {
-      const cfField = document.getElementById('aConfirmField');
-      const invField = document.getElementById('aInviteField');
-      if (cfField.classList.contains('hidden')) {
-        cfField.classList.remove('hidden');
-        invField.classList.remove('hidden');
-        document.getElementById('aPwdC').focus();
-        const n = document.getElementById('authNotice');
-        n.textContent = '처음 방문이시군요! 비밀번호 확인과 관리자 초대 코드를 입력해 주세요.';
-        n.classList.remove('hidden');
-        return;
-      }
-      if (pwd !== cpwd) return errEl.textContent = '비밀번호가 일치하지 않습니다';
-      const invite = document.getElementById('aInvite').value.trim();
-      if (invite !== MANAGER_CODE) return errEl.textContent = '관리자 초대 코드가 올바르지 않습니다';
+  try {
+    const db = await readDB();
+    const existing = db.users.find(u => u.name === name && u.role === authRole);
+
+    if (existing) {
+      // 로그인
+      if (pwd !== existing.pwd) return errEl.textContent = '비밀번호가 맞지 않습니다';
+      const user = { id: existing.id, name: existing.name, role: existing.role };
+      localStorage.setItem('sch_session', JSON.stringify(user));
+      await loginAs(user);
     } else {
-      const cfField = document.getElementById('aConfirmField');
-      if (cfField.classList.contains('hidden')) {
+      // 신규 가입
+      if (!needConfirm) {
         cfField.classList.remove('hidden');
+        if (authRole === 'manager') document.getElementById('aInviteField').classList.remove('hidden');
         document.getElementById('aPwdC').focus();
         const n = document.getElementById('authNotice');
-        n.textContent = '처음 방문이시군요! 비밀번호를 한 번 더 입력해 주세요.';
+        n.textContent = authRole === 'manager'
+          ? '처음 방문이시군요! 비밀번호 확인과 관리자 초대 코드를 입력해 주세요.'
+          : '처음 방문이시군요! 비밀번호를 한 번 더 입력해 주세요.';
         n.classList.remove('hidden');
         return;
       }
       if (pwd !== cpwd) return errEl.textContent = '비밀번호가 일치하지 않습니다';
+      if (authRole === 'manager' && invite !== MANAGER_CODE) {
+        return errEl.textContent = '관리자 초대 코드가 올바르지 않습니다';
+      }
+      const newUser = { id: uid(), name, pwd, role: authRole };
+      db.users.push(newUser);
+      await writeDB(db);
+      const user = { id: newUser.id, name: newUser.name, role: newUser.role };
+      localStorage.setItem('sch_session', JSON.stringify(user));
+      await loginAs(user);
     }
-    const nu = { id: uid(), name, pwd: btoa(unescape(encodeURIComponent(pwd))), role: authRole };
-    users.push(nu);
-    setUsers(users);
-    loginAs(nu);
+  } catch(e) {
+    errEl.textContent = e.message;
   }
 }
 
-function loginAs(user) {
+async function loginAs(user) {
   CU = user;
+  try {
+    await syncAll();
+  } catch(e) {
+    console.error('데이터 로드 오류:', e);
+  }
   document.getElementById('authPage').style.display = 'none';
   if (user.role === 'worker') {
     document.getElementById('appW').classList.add('on');
@@ -902,11 +916,36 @@ function loginAs(user) {
     document.getElementById('appM').classList.add('on');
     document.getElementById('mUserLabel').textContent = user.name;
     initManagerPage();
+    // 관리자: 30초마다 자동 새로고침
+    if (pollTimer) clearInterval(pollTimer);
+    pollTimer = setInterval(async () => {
+      try {
+        await syncAll();
+        renderMWorkerList();
+        renderMFilterSel();
+        renderMGantt();
+      } catch(e) {}
+    }, 30000);
   }
 }
 
-function doLogout() {
+// 세션 자동 복원
+(async function restoreSession() {
+  const saved = localStorage.getItem('sch_session');
+  if (!saved) return;
+  try {
+    const user = JSON.parse(saved);
+    if (user && user.id && user.name && user.role) {
+      await loginAs(user);
+    }
+  } catch(e) { localStorage.removeItem('sch_session'); }
+})();
+
+async function doLogout() {
+  localStorage.removeItem('sch_session');
+  if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
   CU = null; wCalOff = 0; mCalOff = 0;
+  appState.users = []; appState.projects = []; appState.tasks = [];
   document.getElementById('appW').classList.remove('on');
   document.getElementById('appM').classList.remove('on');
   document.getElementById('authPage').style.display = '';
@@ -941,7 +980,7 @@ function renderWProjDrop() {
   projects.forEach(p => { esel.innerHTML += `<option value="${p.id}">${esc(p.name)}</option>`; });
 }
 
-function addTask() {
+async function addTask() {
   const pId  = document.getElementById('wProj').value;
   const title= document.getElementById('wTaskTitle').value.trim();
   const s    = document.getElementById('wTaskStart').value;
@@ -954,14 +993,21 @@ function addTask() {
   if (!e)     return err.textContent = '종료일을 입력하세요';
   if (e < s)  return err.textContent = '종료일은 시작일 이후여야 합니다';
 
-  const tasks = getTasks();
-  tasks.push({ id: uid(), wId: CU.id, wName: CU.name, pId, title, s, e, note:'' });
-  setTasks(tasks);
-  document.getElementById('wTaskTitle').value = '';
-  document.getElementById('wTaskStart').value = d2s(today0());
-  document.getElementById('wTaskEnd').value   = d2s(today0());
-  renderWTaskList();
-  renderWGantt();
+  try {
+    const db = await readDB();
+    const user = db.users.find(u => u.id === CU.id);
+    const newTask = { id: uid(), wId: CU.id, wName: user ? user.name : CU.name, pId, title, s, e, note: '' };
+    db.tasks.push(newTask);
+    await writeDB(db);
+    appState.tasks.push(newTask);
+    document.getElementById('wTaskTitle').value = '';
+    document.getElementById('wTaskStart').value = d2s(today0());
+    document.getElementById('wTaskEnd').value   = d2s(today0());
+    renderWTaskList();
+    renderWGantt();
+  } catch(e2) {
+    err.textContent = e2.message;
+  }
 }
 
 function renderWTaskList() {
@@ -991,11 +1037,17 @@ function renderWTaskList() {
   });
 }
 
-function delTask(id) {
+async function delTask(id) {
   if (!confirm('이 일감을 삭제하시겠습니까?')) return;
-  setTasks(getTasks().filter(t => t.id !== id));
-  renderWTaskList(); renderWGantt();
-  if (document.getElementById('appM').classList.contains('on')) { renderMTaskSummary(); renderMGantt(); }
+  try {
+    const db = await readDB();
+    db.tasks = db.tasks.filter(t => t.id !== id);
+    await writeDB(db);
+    appState.tasks = appState.tasks.filter(t => t.id !== id);
+    renderWTaskList(); renderWGantt();
+  } catch(e) {
+    alert(e.message);
+  }
 }
 
 function openEditTask(id) {
@@ -1013,7 +1065,7 @@ function openEditTask(id) {
 }
 function closeTaskModal() { editTaskId = null; document.getElementById('taskModal').classList.remove('on'); }
 
-function saveTask() {
+async function saveTask() {
   const pId  = document.getElementById('eTaskProj').value;
   const title= document.getElementById('eTaskTitle').value.trim();
   const s    = document.getElementById('eTaskStart').value;
@@ -1026,12 +1078,18 @@ function saveTask() {
   if (!s)     return err.textContent = '시작일을 입력하세요';
   if (!e)     return err.textContent = '종료일을 입력하세요';
   if (e < s)  return err.textContent = '종료일은 시작일 이후여야 합니다';
-  const tasks = getTasks();
-  const i = tasks.findIndex(x => x.id === editTaskId);
-  if (i !== -1) tasks[i] = { ...tasks[i], pId, title, s, e, note };
-  setTasks(tasks);
-  closeTaskModal();
-  renderWTaskList(); renderWGantt();
+  try {
+    const db = await readDB();
+    const idx = db.tasks.findIndex(t => t.id === editTaskId);
+    if (idx !== -1) db.tasks[idx] = { ...db.tasks[idx], pId, title, s, e, note };
+    await writeDB(db);
+    const i = appState.tasks.findIndex(x => x.id === editTaskId);
+    if (i !== -1) appState.tasks[i] = { ...appState.tasks[i], pId, title, s, e, note };
+    closeTaskModal();
+    renderWTaskList(); renderWGantt();
+  } catch(e2) {
+    err.textContent = e2.message;
+  }
 }
 
 // ───────── MANAGER PAGE ─────────
@@ -1096,25 +1154,40 @@ function renderMFilterSel() {
 
 function renderMTaskSummary() { renderMWorkerList(); }
 
-function delWorker(id) {
-  const w = getUsers().find(u => u.id === id);
+async function delWorker(id) {
+  const w = appState.users.find(u => u.id === id);
   if (!w) return;
-  const taskCount = getTasks().filter(t => t.wId === id).length;
+  const taskCount = appState.tasks.filter(t => t.wId === id).length;
   const msg = taskCount > 0
     ? `"${w.name}" 작업자를 삭제하면 해당 작업자의 일감 ${taskCount}개도 함께 삭제됩니다.\n삭제하시겠습니까?`
     : `"${w.name}" 작업자를 삭제하시겠습니까?`;
   if (!confirm(msg)) return;
-  setUsers(getUsers().filter(u => u.id !== id));
-  setTasks(getTasks().filter(t => t.wId !== id));
-  renderMWorkerList();
-  renderMFilterSel();
-  renderMGantt();
+  try {
+    const db = await readDB();
+    db.users  = db.users.filter(u => u.id !== id);
+    db.tasks  = db.tasks.filter(t => t.wId !== id);
+    await writeDB(db);
+    appState.users = appState.users.filter(u => u.id !== id);
+    appState.tasks = appState.tasks.filter(t => t.wId !== id);
+    renderMWorkerList();
+    renderMFilterSel();
+    renderMGantt();
+  } catch(e) {
+    alert(e.message);
+  }
 }
 
-function delTaskByManager(id) {
+async function delTaskByManager(id) {
   if (!confirm('이 일감을 삭제하시겠습니까?')) return;
-  setTasks(getTasks().filter(t => t.id !== id));
-  renderMGantt();
+  try {
+    const db = await readDB();
+    db.tasks = db.tasks.filter(t => t.id !== id);
+    await writeDB(db);
+    appState.tasks = appState.tasks.filter(t => t.id !== id);
+    renderMGantt();
+  } catch(e) {
+    alert(e.message);
+  }
 }
 
 function renderMTaskList(tasks, workers, projects) {
@@ -1122,7 +1195,7 @@ function renderMTaskList(tasks, workers, projects) {
   if (!tasks.length) { wrap.innerHTML = ''; return; }
   const sorted = [...tasks].sort((a, b) => a.s.localeCompare(b.s));
   wrap.innerHTML = `
-    <div style="font-size:12px;color:var(--fg3);margin-bottom:8px">일감 목록 (${sorted.length}개)</div>
+    <div style="font-size:12px;color:var(--fg3);margin-bottom:8px">일감 목록 (${sorted.length}몄)</div>
     <div class="task-list-m">
       ${sorted.map(t => {
         const p = projects.find(x => x.id === t.pId);
@@ -1177,29 +1250,45 @@ function renderColorGrid() {
     `<div class="color-swatch${c===selColor?' on':''}" style="background:${c}" onclick="selColor='${c}';renderColorGrid()"></div>`
   ).join('');
 }
-function saveProj() {
+async function saveProj() {
   const name = document.getElementById('eProjName').value.trim();
   const err  = document.getElementById('eProjErr');
   err.textContent = '';
   if (!name) return err.textContent = '프로젝트명을 입력하세요';
-  let projs = getProjects();
-  if (editProjId) {
-    const i = projs.findIndex(x => x.id===editProjId);
-    if (i!==-1) projs[i] = { ...projs[i], name, color: selColor };
-  } else {
-    projs.push({ id: uid(), name, color: selColor });
+  try {
+    const db = await readDB();
+    if (editProjId) {
+      const i = db.projects.findIndex(x => x.id === editProjId);
+      if (i !== -1) db.projects[i] = { ...db.projects[i], name, color: selColor };
+      await writeDB(db);
+      const j = appState.projects.findIndex(x => x.id === editProjId);
+      if (j !== -1) appState.projects[j] = { ...appState.projects[j], name, color: selColor };
+    } else {
+      const np = { id: uid(), name, color: selColor };
+      db.projects.push(np);
+      await writeDB(db);
+      appState.projects.push(np);
+    }
+    closeProjModal();
+    renderMProjList();
+    renderMFilterSel();
+    renderMGantt();
+    if (CU?.role === 'worker') renderWProjDrop();
+  } catch(e) {
+    err.textContent = e.message;
   }
-  setProjects(projs);
-  closeProjModal();
-  renderMProjList();
-  renderMFilterSel();
-  renderMGantt();
-  if (CU?.role==='worker') renderWProjDrop();
 }
-function delProj(id) {
+async function delProj(id) {
   if (!confirm('이 프로젝트를 삭제하시겠습니까?\n이 프로젝트에 속한 일감의 프로젝트 정보가 사라집니다.')) return;
-  setProjects(getProjects().filter(p => p.id!==id));
-  renderMProjList(); renderMFilterSel(); renderMGantt();
+  try {
+    const db = await readDB();
+    db.projects = db.projects.filter(p => p.id !== id);
+    await writeDB(db);
+    appState.projects = appState.projects.filter(p => p.id !== id);
+    renderMProjList(); renderMFilterSel(); renderMGantt();
+  } catch(e) {
+    alert(e.message);
+  }
 }
 
 // ───────── GANTT ─────────
